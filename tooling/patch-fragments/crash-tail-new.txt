@@ -1,0 +1,8 @@
+		"--- renderer console (error level, oldest first) ---",
+		consoleSection,
+		"",
+		"--- memory snapshot (P-282) ---",
+		p282MemorySnapshot(),
+		""
+	].join("\n");
+}

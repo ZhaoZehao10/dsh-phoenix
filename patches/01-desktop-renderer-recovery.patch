@@ -1,0 +1,77 @@
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 4770fe8..39ddee7 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -3,6 +3,7 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { access, readFile, writeFile } from 'node:fs/promises'
++import { appendFileSync } from 'node:fs'
+ import { join } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import {
+@@ -67,6 +68,35 @@ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
+ import { DesktopTray } from './tray.ts'
+ import { DesktopBackgroundNotice } from './background-notice.ts'
+ 
++/**
++ * Renderer exits a page reload can repair. The window is a pure view over the
++ * durable session log, so a dead renderer is recoverable state rather than a
++ * corrupt one; `oom` is the case observed in the field (the renderer heap
++ * exhausts on a very large session and Chromium kills the process).
++ */
++const RECOVERABLE_RENDERER_EXITS: ReadonlySet<string> = new Set(['oom', 'crashed', 'killed'])
++/** Reloads one renderer-OOM recovery may spend before escalating to the fatal dialog. */
++const MAX_RENDERER_RECOVERIES = 2
++/** Delay before reloading, so a still-dying process is not asked to navigate synchronously. */
++const RENDERER_RECOVERY_DELAY_MS = 250
++/**
++ * Isolated crashes (hours apart) must not consume each other's reload budget; only
++ * a tight crash loop exhausts it, so a session that deterministically exhausts the
++ * heap on load still surfaces a diagnostic instead of looping forever.
++ */
++const RECOVERY_BUDGET_RESET_MS = 60_000
++let rendererRecoveries = 0
++let lastRecoveryAt = 0
++/** Persist one recovery to the app logs dir; logging must never block the recovery. */
++const logRendererRecovery = (message: string): void => {
++  console.warn(`dsh desktop: ${message}`)
++  try {
++    appendFileSync(join(app.getPath('logs'), 'renderer-recovery.log'), `${new Date().toISOString()} ${message}\n`)
++  } catch {
++    // recovery must not depend on logging
++  }
++}
++
+ let focusPrimaryWindow = (): void => {}
+ let stopForRecovery = async (): Promise<void> => { await stopOperationReports() }
+ let shuttingDown = false
+@@ -1205,9 +1235,27 @@ async function main(): Promise<void> {
+     })
+     window.webContents.on('render-process-gone', (_event, details) => {
+       navigation = undefined
+-      if (!quitting && !window.isDestroyed() && details.reason !== 'clean-exit') {
++      if (quitting || window.isDestroyed() || details.reason === 'clean-exit') return
++      // Isolated crashes (hours apart) must not consume each other's budget; only a
++      // tight crash loop exhausts it, so a session that deterministically exhausts
++      // the heap on load still surfaces a diagnostic instead of looping forever.
++      if (Date.now() - lastRecoveryAt > RECOVERY_BUDGET_RESET_MS) rendererRecoveries = 0
++      const recoverable = RECOVERABLE_RENDERER_EXITS.has(details.reason) && rendererRecoveries < MAX_RENDERER_RECOVERIES
++      if (!recoverable) {
+         reportFatal(new Error(`Desktop renderer exited: ${details.reason}`), 'renderer')
++        return
+       }
++      rendererRecoveries += 1
++      lastRecoveryAt = Date.now()
++      logRendererRecovery(`renderer exited (${details.reason}); reloading page (recovery ${rendererRecoveries}/${MAX_RENDERER_RECOVERIES})`)
++      setTimeout(() => {
++        if (quitting || window.isDestroyed()) return
++        try {
++          window.reload()
++        } catch (error) {
++          reportFatal(error, 'renderer')
++        }
++      }, RENDERER_RECOVERY_DELAY_MS)
+     })
+     return window
+   }

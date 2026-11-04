@@ -1,0 +1,14 @@
+// ★ P-282 v5.1：渲染器内存心跳 + 看门狗（只写日志、无 UI 打扰）。
+// 每 60s 采样：缓存"最近一次"渲染器内存（崩溃后进程已死，靠这个缓存还原现场）；
+// 任一渲染器 privateBytes > 1.5GB 时追加一行到 renderer-memory.log。
+let p282LastRendererMemory = "";
+setInterval(() => {
+	try {
+		const tabs = app.getAppMetrics().filter((m) => m.type === "Tab");
+		if (tabs.length > 0) p282LastRendererMemory = tabs.map((t) => `${t.pid}:${Math.round((t.memory.privateBytes || 0) / 1024)}MB`).join(" ");
+		const big = tabs.filter((t) => (t.memory.privateBytes || 0) > 1.5 * 1024 * 1024);
+		if (big.length > 0) {
+			appendFileSync(join(app.getPath("logs"), "renderer-memory.log"), `${new Date().toISOString()} ${big.map((t) => `${t.pid}:${Math.round((t.memory.privateBytes || 0) / 1024)}MB`).join(" ")}\n`);
+		}
+	} catch (_error) {}
+}, 60000).unref();

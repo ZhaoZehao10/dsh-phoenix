@@ -1,0 +1,27 @@
+/**
+ * P-282：崩溃报告的内存快照（主进程 / 渲染器 / 系统）。
+ * 诊断价值：`render-process-gone` 的 `oom` 在崩溃报告里没有任何内存字段，
+ * 现场只能靠系统事件日志反推。此函数把关键时刻的水位写进报告本身。
+ */
+function p282MemorySnapshot() {
+	try {
+		const lines = [];
+		const mem = process.memoryUsage();
+		lines.push(`main: rss=${Math.round(mem.rss / 1048576)}MB heapUsed=${Math.round(mem.heapUsed / 1048576)}MB external=${Math.round(mem.external / 1048576)}MB`);
+		try {
+			const sys = typeof process.getSystemMemoryInfo === "function" ? process.getSystemMemoryInfo() : void 0;
+			if (sys) lines.push(`system: total=${Math.round(sys.total / 1024)}MB free=${Math.round(sys.free / 1024)}MB`);
+		} catch (_error) {}
+		try {
+			const tabs = app.getAppMetrics().filter((m) => m.type === "Tab");
+			if (tabs.length > 0) lines.push(`renderers: ${tabs.map((t) => `${t.pid}:private=${Math.round((t.memory.privateBytes || 0) / 1024)}MB ws=${Math.round((t.memory.workingSetSize || 0) / 1024)}MB`).join(" | ")}`);
+		} catch (_error) {}
+		try {
+			const last = typeof p282LastRendererMemory !== "undefined" && p282LastRendererMemory ? p282LastRendererMemory : "";
+			if (last) lines.push(`last renderer（崩溃前 60s 内的心跳）: ${last}`);
+		} catch (_error) {}
+		return lines.join("\n") || "(unavailable)";
+	} catch (_error) {
+		return "(unavailable)";
+	}
+}

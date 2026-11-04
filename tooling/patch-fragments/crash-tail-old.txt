@@ -1,0 +1,5 @@
+		"--- renderer console (error level, oldest first) ---",
+		consoleSection,
+		""
+	].join("\n");
+}

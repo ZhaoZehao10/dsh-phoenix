@@ -1,0 +1,15 @@
+# 构建产物（可重建）
+work/
+*.asar
+*.asar.*
+app.asar.patched
+app.asar.test-variant
+# 依赖与临时
+node_modules/
+_*.mjs
+*.log
+.DS_Store
+# 本地专用（不入库）
+.last-pushed.json
+verify-remote.mjs
+repo-hygiene.mjs

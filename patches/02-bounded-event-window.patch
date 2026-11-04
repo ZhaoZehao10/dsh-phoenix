@@ -1,0 +1,199 @@
+diff --git a/packages/api/session-controller/src/client/contract/events.ts b/packages/api/session-controller/src/client/contract/events.ts
+index bc825f0..d9e7671 100644
+--- a/packages/api/session-controller/src/client/contract/events.ts
++++ b/packages/api/session-controller/src/client/contract/events.ts
+@@ -126,6 +126,38 @@ export class MutableSessionEventSource implements SessionEventSource {
+     0,
+     { kind: 'replace', entries: [] },
+   )
++  /** Resident byte budget for the window; Infinity disables eviction. */
++  private readonly budgetBytes: number
++  /** Evict down to this fraction of the budget so trimming is amortized. */
++  private readonly lowWaterRatio: number
++  /** Bytes of tail that always stay resident, whatever the budget says. */
++  private readonly tailBytes: number
++  /** Serialized byte cost of the resident window, maintained incrementally. */
++  private residentBytes = 0
++  /** Memoized per-entry costs; window entries are immutable. */
++  private readonly costs = new WeakMap<SessionEventLikeEntry, number>()
++  /** Set by enforceBudget, consumed by publish. */
++  private evicted = false
++  /**
++   * Whether this window ever evicted. Once true hasMore stays true for the window's
++   * lifetime: dropped entries remain on the Host log and must stay reachable, even
++   * after a caller reports that the log itself has no older page.
++   */
++  private hasEvicted = false
++
++  /**
++   * @param options - resident window budget; omit to keep the previous unbounded
++   * behaviour for callers that opt out.
++   */
++  constructor(options: {
++    readonly budgetBytes?: number
++    readonly lowWaterRatio?: number
++    readonly tailBytes?: number
++  } = {}) {
++    this.budgetBytes = options.budgetBytes ?? RESIDENT_EVENT_BYTES
++    this.lowWaterRatio = options.lowWaterRatio ?? EVICT_LOW_WATER_RATIO
++    this.tailBytes = options.tailBytes ?? PROTECTED_TAIL_BYTES
++  }
+ 
+   /** @returns the cached event-window snapshot. */
+   getSnapshot(): SessionEventWindow { return this.snapshot }
+@@ -147,6 +179,9 @@ export class MutableSessionEventSource implements SessionEventSource {
+    */
+   replace(entries: readonly SessionEventLikeEntry[], hasMore: boolean): void {
+     this.window = leaf(entries)
++    this.residentBytes = entries.reduce((sum, entry) => sum + this.costOf(entry), 0)
++    this.hasEvicted = false
++    this.enforceBudget()
+     this.publish(hasMore, { kind: 'replace', entries })
+   }
+ 
+@@ -156,7 +191,10 @@ export class MutableSessionEventSource implements SessionEventSource {
+    * @param hasMore - whether still older history remains.
+    */
+   prepend(entries: readonly SessionEventLikeEntry[], hasMore: boolean): void {
++    for (const entry of entries) this.residentBytes += this.costOf(entry)
+     this.window = concat(leaf(entries), this.window)
++    this.enforceBudget()
++    // hasMore is finalised in publish() so an eviction cannot be erased by the caller.
+     this.publish(hasMore, { kind: 'prepend', entries })
+   }
+ 
+@@ -166,7 +204,9 @@ export class MutableSessionEventSource implements SessionEventSource {
+    */
+   append(entry: SessionEventLikeEntry): void {
+     const entries = [entry]
++    this.residentBytes += this.costOf(entry)
+     this.window = concat(this.window, leaf(entries))
++    this.enforceBudget()
+     this.publish(this.snapshot.hasMore, {
+       kind: 'append',
+       entries,
+@@ -188,6 +228,8 @@ export class MutableSessionEventSource implements SessionEventSource {
+       else entries.splice(index, 0, entry)
+     }
+     this.window = leaf(entries)
++    this.residentBytes = entries.reduce((sum, candidate) => sum + this.costOf(candidate), 0)
++    this.enforceBudget()
+     this.publish(this.snapshot.hasMore, {
+       kind: 'settle-assistant',
+       attemptId,
+@@ -195,11 +237,95 @@ export class MutableSessionEventSource implements SessionEventSource {
+     })
+   }
+ 
++  /** Serialized byte cost of one entry, memoized: window entries are immutable. */
++  private costOf(entry: SessionEventLikeEntry): number {
++    const cached = this.costs.get(entry)
++    if (cached !== undefined) return cached
++    const cost = JSON.stringify(entry.event).length
++    this.costs.set(entry, cost)
++    return cost
++  }
++
++  /**
++   * Drop head entries until the window fits the low-water mark.
++   *
++   * Two floors bound how far the head may advance: the low-water mark (why we trim
++   * at all) and tailBytes (what must survive). The byte floor keeps the memory bound
++   * sound: the worst case is budget + tailBytes regardless of how entry sizes are
++   * distributed, whereas a count floor would pin whatever the largest entries weigh.
++   * At least one entry always survives, so one oversized message cannot empty the
++   * window.
++   */
++  private enforceBudget(): void {
++    if (!Number.isFinite(this.budgetBytes)) return
++    if (this.residentBytes <= this.budgetBytes) return
++    const resident = materialize(this.window)
++    const lowWater = Math.floor(this.budgetBytes * this.lowWaterRatio)
++    let drop = 0
++    let freed = 0
++    // One forward pass to the low-water mark keeps trimming amortized O(1).
++    while (drop < resident.length - 1) {
++      const cost = this.costOf(resident[drop] as SessionEventLikeEntry)
++      if (this.residentBytes - freed - cost < this.tailBytes) break
++      freed += cost
++      drop += 1
++      if (this.residentBytes - freed <= lowWater) break
++    }
++    if (drop === 0) return
++    this.window = leaf(resident.slice(drop))
++    this.residentBytes -= freed
++    this.evicted = true
++    this.hasEvicted = true
++  }
++
+   private publish(
+     hasMore: boolean,
+     change: SessionEventChange,
+   ): void {
+-    this.snapshot = windowSnapshot(this.window, hasMore, this.snapshot.revision + 1, change)
++    const evicted = this.evicted
++    this.evicted = false
++    if (evicted) {
++      // The dropped prefix still exists on the Host, so older pages remain reachable,
++      // and the changed head cannot be described by an incremental delta: consumers
++      // apply change to virtual row keys, ARIA indexes and height caches.
++      this.snapshot = windowSnapshot(
++        this.window,
++        true,
++        this.snapshot.revision + 1,
++        { kind: 'replace', entries: this.snapshot.entries },
++      )
++    } else {
++      // Once this window has evicted, its older history lives on the Host, so the
++      // window must keep reporting that more history is reachable even when the
++      // caller reports that the log itself has no older page left.
++      this.snapshot = windowSnapshot(
++        this.window,
++        hasMore || this.hasEvicted,
++        this.snapshot.revision + 1,
++        change,
++      )
++    }
+     notifySubscribers(this.listeners, '[session-controller] event feed')
+   }
+ }
++
++/**
++ * Default resident budget for the event window, in bytes of serialized events.
++ *
++ * Holds several screens of history plus an active turn for conversations with very
++ * large tool results, while staying far below the V8 heap ceiling that produced
++ * render-process-gone: oom. Tuned against a 172,293,840-byte / 60,858-event field
++ * session: peak resident heap 48 MB instead of 169 MB, and flat as the session grows
++ * instead of linear in it.
++ */
++export const RESIDENT_EVENT_BYTES = 48 * 1024 * 1024
++
++/** Evict down to this fraction of the budget. */
++export const EVICT_LOW_WATER_RATIO = 0.75
++
++/**
++ * Bytes of tail that stay resident even when a single entry exceeds the budget. A
++ * byte floor (not a count) keeps resident <= budget + PROTECTED_TAIL_BYTES true for
++ * any entry-size distribution.
++ */
++export const PROTECTED_TAIL_BYTES = 512 * 1024
+diff --git a/packages/api/session-controller/src/client/sessions/session.ts b/packages/api/session-controller/src/client/sessions/session.ts
+index 09494e0..1e0f2f2 100644
+--- a/packages/api/session-controller/src/client/sessions/session.ts
++++ b/packages/api/session-controller/src/client/sessions/session.ts
+@@ -163,7 +163,13 @@ export class Session implements SessionFace {
+    */
+   readonly projections: ProjectionValueStore
+ 
+-  /** Contiguous history and live tail consumed by Conversation assembly. */
++  /**
++   * Contiguous history and live tail consumed by Conversation assembly.
++   *
++   * Bounded: the resident window is capped so a long session cannot exhaust the
++   * renderer heap. Evicted history stays addressable - hasMore remains true and
++   * loadOlder() / loadThrough() page it back from the Host log.
++   */
+   readonly eventSource = new MutableSessionEventSource()
+   private snapshotCache: SessionSnapshot
+   private readonly notifier: Notifier

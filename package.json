@@ -1,0 +1,11 @@
+﻿{
+  "name": "dsh-phoenix",
+  "version": "5.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Renderer-death recovery for DeepSeek Harness desktop: bounded page reload, crash-report memory diagnostics, and an installable asar patch toolchain. Includes upstream source patches.",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/asar": "4.3.1"
+  }
+}
