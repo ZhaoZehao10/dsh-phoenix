@@ -38,7 +38,7 @@ const makeEntry = (e) => ({ event: { seq: e.s, type: e.t }, __bytes: e.b })
   const { BoundedSessionEventSource } = await import(`file://${modulePath.replace(/\\/g, '/')}`)
 
   const budget = 48 * MB
-  console.log('scrollback scenario â€?open at tail, page backwards to session start')
+  console.log('scrollback scenario : open at tail, page backwards to session start')
   console.log(`session: ${series.length} events / ${(data.totalEventBytes / MB).toFixed(1)} MB, page size ${PAGE_EVENTS}`)
   console.log('')
 
