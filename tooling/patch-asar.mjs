@@ -25,7 +25,7 @@ import path from 'node:path';
 
 const ASAR = __ASAR;
 const OUT = __PATCHED;
-const MARKER = '/* P-282 renderer-recovery v6 */';
+const MARKER = '/* P-282 renderer-recovery v9 */';
 
 // 源 asar 解析：若安装的 asar 已含旧版补丁（用户已安装过），自动改用最新备份作为干净源。
 // 这是「补丁升级」场景：安装中的 asar 是补丁版，备份才是原版。
@@ -183,7 +183,7 @@ const BOOTCHECK = `
 \t\tif (process.env.DSH_PATCH_BOOTCHECK) {
 \t\t\tapp.whenReady().then(() => {
 \t\t\t\ttry {
-\t\t\t\t\tappendFileSync(process.env.DSH_PATCH_BOOTCHECK, \`boot-ok \${app.getVersion()} marker=P-282-v6\\n\`);
+\t\t\t\t\tappendFileSync(process.env.DSH_PATCH_BOOTCHECK, \`boot-ok \${app.getVersion()} marker=P-282-v9\\n\`);
 \t\t\t\t} catch (_error) {}
 \t\t\t\tapp.exit(77);
 \t\t\t});
@@ -194,11 +194,37 @@ const CRASH_HELPER = FRAG('crash-helper.txt');
 const OLD_CRASH_TAIL = FRAG('crash-tail-old.txt');
 const NEW_CRASH_TAIL = FRAG('crash-tail-new.txt');
 const WATCHDOG = FRAG('watchdog.txt');
+const UI_GUARD = FRAG('ui-guard.js');
+
+const UI_GUARD_BLOCK = '\n\t\t// ★ P-282 v7：UI 守护（滚动/草稿快照 + 堆水位预警；DSH_P282_UI_GUARD=0 可禁用）'
+  + '\n\t\tconst P282_UI_GUARD = ' + JSON.stringify(UI_GUARD) + ';'
+  + '\n\t\tif (process.env.DSH_P282_UI_GUARD !== "0") {'
+  + '\n\t\t\twindow.webContents.on("did-finish-load", () => {'
+  + '\n\t\t\t\ttry { window.webContents.executeJavaScript(P282_UI_GUARD, true).catch(() => {}); } catch (_error) {}'
+  + '\n\t\t\t});'
+  + '\n\t\t\twindow.webContents.on("console-message", (details) => {'
+  + '\n\t\t\t\ttry {'
+  + '\n\t\t\t\t\tif (!details || typeof details.message !== "string") return;'
+  + '\n\t\t\t\t\tconst p282Msg = details.message;'
+  + '\n\t\t\t\t\tconst p282IsMem = p282Msg.indexOf("[P-282-MEM]") >= 0;'
+  + '\n\t\t\t\t\tconst p282IsUi = p282Msg.indexOf("[P-282-UI]") >= 0;'
+  + '\n\t\t\t\t\tif (!p282IsMem && !p282IsUi) return;'
+  + '\n\t\t\t\t\tif (p282IsUi) { globalThis.__p282UiLogCount = (globalThis.__p282UiLogCount || 0) + 1; if (globalThis.__p282UiLogCount > 40) return; }'
+  + '\n\t\t\t\t\tappendFileSync(join(app.getPath("logs"), "renderer-memory.log"), `${new Date().toISOString()} ${p282Msg}\n`);'
+  + '\n\t\t\t\t\tif (!p282IsMem) return;'
+  + '\n\t\t\t\t\tif (Notification.isSupported() && Date.now() - (globalThis.__p282MemWarnAt || 0) > 1800000) {'
+  + '\n\t\t\t\t\t\tglobalThis.__p282MemWarnAt = Date.now();'
+  + '\n\t\t\t\t\t\tnew Notification({ title: "DSH 渲染器内存接近上限", body: details.message.replace("[P-282-MEM] ", "") + " — 建议保存工作并重启应用" }).show();'
+  + '\n\t\t\t\t\t}'
+  + '\n\t\t\t\t} catch (_error) {}'
+  + '\n\t\t\t});'
+  + '\n\t\t}';
+
 const INCLUDE_BOOTCHECK = process.env.DSH_NO_BOOTCHECK !== '1';
 const RENDER_ANCHOR = 'function renderCrashReport(input) {';
 const LOGS_ANCHOR = 'app.setAppLogsPath();';
 
-let patched = src.replace(OLD_HANDLER, NEW_HANDLER + (INCLUDE_BOOTCHECK ? BOOTCHECK : ''));
+let patched = src.replace(OLD_HANDLER, NEW_HANDLER + (INCLUDE_BOOTCHECK ? BOOTCHECK : '') + UI_GUARD_BLOCK);
 if (!patched.includes(OLD_CRASH_TAIL)) { console.log('❌ 崩溃报告尾部锚点未命中 —— 上游已改？中止'); process.exit(1); }
 patched = patched.replace(OLD_CRASH_TAIL, NEW_CRASH_TAIL);
 if (!patched.includes(RENDER_ANCHOR)) { console.log('❌ renderCrashReport 锚点未命中'); process.exit(1); }

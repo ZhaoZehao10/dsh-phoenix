@@ -1,7 +1,22 @@
-# Changelog — P-282 / dsh-phoenix
+﻿# Changelog — P-282 / dsh-phoenix
 
 The patch version matches the marker inside the built `main.js` (`/* P-282 renderer-recovery vN */`), so the installed artifact can be identified directly.
 
+## v9 — 2026-11-05
+- **修复 v7/v8 的滚动恢复**（两个根因，均由独立 Electron 迷你应用 E2E 复现确认）：
+  1. `sessionStorage` 在渲染器进程崩溃时丢失 ⟹ 改用 `localStorage`（跨崩溃持久）；
+  2. `scrollHeight > clientHeight` 对 `overflow:hidden` 的不可滚动容器同样成立 ⟹ 只接受 `overflow-y: auto|scroll|overlay` 的元素。
+- **诊断日志**：`[P-282-UI] guard active @ <origin>`、`snapshot first main=… fields=…`、`restore begin age=…`、`restore skipped: …`。
+- **真机验证**：受控杀渲染器后，滚动位置与输入框草稿均恢复（`restore begin age=1071ms main=6515/10381 fields=1`）。
+
+## v8 — 2026-11-04
+- 滚动恢复重做：主滚动容器启发式（可滚动范围最大者）+ 按比例映射 + 加载后 10 秒内每 300ms 持续校正（应用可能在加载后自动滚到底部）。
+
+## v7 — 2026-11-04
+- **UI 守护**（主窗口每次加载注入）：
+  - 每 2 秒自动快照滚动位置与输入框/可编辑区草稿；仅当快照 <10 秒（崩溃重载）时恢复；
+  - 堆水位预警：每 30 秒检查 `performance.memory`，>80% 写 `renderer-memory.log` 并弹系统通知（30 分钟最多一次）；
+  - 安全开关：`DSH_P282_UI_GUARD=0` 可禁用。
 ## v6 — 2026-11-04
 - **Fix (v5 defect)**: at crash time the renderer process is already gone, so `app.getAppMetrics()` cannot see it — the log showed `renderers=n/a`. Added a **60-second heartbeat cache** (`p282LastRendererMemory`); recovery log and crash report now carry `last=` (the last renderer memory before the crash).
 - **Install script fix**: a failed `taskkill` cleanup of an already-exited child process is no longer treated as a fatal error (previously it aborted the script after a successful BOOTCHECK).
@@ -45,7 +60,7 @@ The patch version matches the marker inside the built `main.js` (`/* P-282 rende
 | v3 | C1–C10 (19) | ✅ | ✅ | — | **✅ install + 6 kills + 5-round soak** |
 | v4 | C1–C12 (21) | ✅ | ✅ | — | ✗ (copy full-flow + byte-verified rollback) |
 | v5 | 21 | ✅ | ✅ | ✅ 5 | ✅ Phase A/B (3 kills + 5-round soak) |
-| v6 | 21 | ✅ | ✅ | ✅ 5 | ✅ heartbeat + escalation + crash-report memory |
+| v6 | 21 | ✅ | ✅ | ✅ 5 | ✅ heartbeat + escalation + crash-report memory |`n| v7 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ install + live kill（草稿恢复；滚动待修） |`n| v8 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ⚠️ 滚动仍失败（容器识别错误） |`n| v9 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ 滚动 + 草稿均恢复（真机） |
 
 > v3 was the first version installed and live-tested; v5/v6 repeated the live battery on the real machine.
 > Static/simulation suites (structure 12, reference 11, semantics 21, crash-report 5, fuzz 100) are green for every version that ships.
