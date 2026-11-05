@@ -2,6 +2,10 @@
 
 The patch version matches the marker inside the built `main.js` (`/* P-282 renderer-recovery vN */`), so the installed artifact can be identified directly.
 
+## v10 — 2026-11-05
+- **关键修复**：Electron 的 `performance.memory.usedJSHeapSize` 在未启用 `--enable-precise-memory-info` 时**恒为 10 MB**（实测）⟹ 堆水位预警永远不会触发。已在主进程模块初始化时添加该开关（本地 asar 补丁与上游补丁 03 同步）。
+- **真实 80% 堆触发 E2E 通过**：独立 Electron（`--max-old-space-size=512` + `--enable-precise-memory-info`）将渲染器堆分配至 **80.52%（513 MB / 637 MB）**，guard 输出 `[P-282-MEM] 81% (490MB / 608MB)`。
+- UI 快照日志增加 `heap=<used>/<limit>` 诊断；新增 `patches/README.md`（补丁依赖与最小验证命令）。
 ## v9 — 2026-11-05
 - **修复 v7/v8 的滚动恢复**（两个根因，均由独立 Electron 迷你应用 E2E 复现确认）：
   1. `sessionStorage` 在渲染器进程崩溃时丢失 ⟹ 改用 `localStorage`（跨崩溃持久）；
@@ -60,7 +64,7 @@ The patch version matches the marker inside the built `main.js` (`/* P-282 rende
 | v3 | C1–C10 (19) | ✅ | ✅ | — | **✅ install + 6 kills + 5-round soak** |
 | v4 | C1–C12 (21) | ✅ | ✅ | — | ✗ (copy full-flow + byte-verified rollback) |
 | v5 | 21 | ✅ | ✅ | ✅ 5 | ✅ Phase A/B (3 kills + 5-round soak) |
-| v6 | 21 | ✅ | ✅ | ✅ 5 | ✅ heartbeat + escalation + crash-report memory |`n| v7 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ install + live kill（草稿恢复；滚动待修） |`n| v8 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ⚠️ 滚动仍失败（容器识别错误） |`n| v9 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ 滚动 + 草稿均恢复（真机） |
+| v6 | 21 | ✅ | ✅ | ✅ 5 | ✅ heartbeat + escalation + crash-report memory |`n| v7 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ install + live kill（草稿恢复；滚动待修） |`n| v8 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ⚠️ 滚动仍失败（容器识别错误） |`n| v9 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ 滚动 + 草稿均恢复（真机） |`n| v10 | 21 + UI 12 | ✅ | ✅ | ✅ 5 | ✅ 真实 80% 堆触发 E2E（81% 告警）；待真机复测 |
 
 > v3 was the first version installed and live-tested; v5/v6 repeated the live battery on the real machine.
 > Static/simulation suites (structure 12, reference 11, semantics 21, crash-report 5, fuzz 100) are green for every version that ships.

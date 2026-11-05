@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
 	try {
 		if (window.__P282_UI_GUARD__) return;
 		window.__P282_UI_GUARD__ = true;
@@ -131,7 +131,7 @@
 			try {
 				var __snap = capture();
 				STORE && STORE.setItem(SNAP_KEY, JSON.stringify(__snap));
-				if (!__p282SnapLogged) { __p282SnapLogged = true; console.warn('[P-282-UI] snapshot first main=' + (__snap.main ? Math.round(__snap.main.y) + '/' + __snap.main.h : 'none') + ' fields=' + __snap.fields.length); }
+				if (!__p282SnapLogged) { __p282SnapLogged = true; console.warn('[P-282-UI] snapshot first main=' + (__snap.main ? Math.round(__snap.main.y) + '/' + __snap.main.h : 'none') + ' fields=' + __snap.fields.length + ' heap=' + (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) + '/' + Math.round(performance.memory.jsHeapSizeLimit / 1048576) : 'n/a')); }
 			} catch (e) {}
 		}, 2000);
 
