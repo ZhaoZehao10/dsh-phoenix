@@ -1,7 +1,9 @@
-// ★ P-282 v5.1：渲染器内存心跳 + 看门狗（只写日志、无 UI 打扰）。
+﻿// ★ P-282 v5.1：渲染器内存心跳 + 看门狗（只写日志、无 UI 打扰）。
 // 每 60s 采样：缓存"最近一次"渲染器内存（崩溃后进程已死，靠这个缓存还原现场）；
 // 任一渲染器 privateBytes > 1.5GB 时追加一行到 renderer-memory.log。
 let p282LastRendererMemory = "";
+// 精确内存读数：否则 performance.memory.usedJSHeapSize 在 Electron 中恒为 10MB，堆水位预警永远不会触发
+app.commandLine.appendSwitch("enable-precise-memory-info");
 setInterval(() => {
 	try {
 		const tabs = app.getAppMetrics().filter((m) => m.type === "Tab");
