@@ -1,43 +1,235 @@
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index 3e50e30..a27f002 100644
+index 3e50e30..5d7bd35 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -21,6 +21,7 @@ import {
-   powerMonitor,
-   nativeImage,
-   nativeTheme,
-+  Notification,
-   protocol,
-   session,
-   shell,
-@@ -1386,6 +1387,30 @@ async function main(): Promise<void> {
+@@ -46,6 +46,7 @@ import { prepareDesktopUpdateWindow } from './update-window.ts'
+ import { DesktopCommandManager } from './command-management.ts'
+ import { serveWebDocument, authenticateWebHost, forwardWebRequest, removeLegacyHostCookies } from './web-document.ts'
+ import { DesktopFatalRecovery } from './fatal-recovery.ts'
++import { installUiGuard } from './ui-guard.ts'
+ import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
+ import { OperationJournal } from './operation-journal.ts'
+ import { runOperationReportJob, type OperationReportJobResult } from './operation-report-job.ts'
+@@ -1386,6 +1387,7 @@ async function main(): Promise<void> {
          }
        }, RENDERER_RECOVERY_DELAY_MS)
      })
-+    // UI snapshot: preserve scroll position and drafts across a recovery reload,
-+    // and warn before the renderer heap reaches its limit.
-+    const UI_GUARD_SCRIPT = "(function () {\n\ttry {\n\t\tif (window.__P282_UI_GUARD__) return;\n\t\twindow.__P282_UI_GUARD__ = true;\n\t\ttry { console.warn('[P-282-UI] guard active @ ' + String((window.location && window.location.href) || '').slice(0, 90)); } catch (e) {}\n\t\tvar SNAP_KEY = '__P282_UI_SNAPSHOT__';\n\t\tvar STORE = (function () {\n\t\t\ttry { var ls = window.localStorage; ls.setItem('__p282_probe__', '1'); ls.removeItem('__p282_probe__'); return ls; } catch (e) {}\n\t\t\ttry { return window.sessionStorage; } catch (e) {}\n\t\t\treturn null;\n\t\t})();\n\t\tvar FRESH_MS = 10000;           // 仅恢复\"崩溃前 10 秒内\"的快照\n\t\tvar HEAP_WARN_RATIO = 0.8;      // 堆水位预警阈值\n\n\t\tfunction indexOf(el) {\n\t\t\tvar i = 0, s = el;\n\t\t\twhile ((s = s.previousElementSibling)) i++;\n\t\t\treturn i;\n\t\t}\n\t\tfunction pathOf(el) {\n\t\t\tvar parts = [], n = el;\n\t\t\twhile (n && n.nodeType === 1 && parts.length < 8) {\n\t\t\t\tparts.unshift(indexOf(n) + ':' + (n.tagName || '').toLowerCase());\n\t\t\t\tn = n.parentElement;\n\t\t\t}\n\t\t\treturn parts.join('/');\n\t\t}\n\t\tfunction findByPath(path) {\n\t\t\ttry {\n\t\t\t\tvar parts = String(path).split('/');\n\t\t\t\tvar n = document;\n\t\t\t\tfor (var i = 0; i < parts.length; i++) {\n\t\t\t\t\tvar p = parts[i].split(':');\n\t\t\t\t\tvar idx = parseInt(p[0], 10);\n\t\t\t\t\tif (!n || !n.children || idx >= n.children.length) return null;\n\t\t\t\t\tn = n.children[idx];\n\t\t\t\t}\n\t\t\t\treturn n;\n\t\t\t} catch (e) { return null; }\n\t\t}\n\t\tfunction setValue(el, value) {\n\t\t\ttry {\n\t\t\t\tif (el.isContentEditable) {\n\t\t\t\t\tel.innerText = value;\n\t\t\t\t\tel.dispatchEvent(new Event('input', { bubbles: true }));\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tvar proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;\n\t\t\t\tvar setter = Object.getOwnPropertyDescriptor(proto, 'value').set;\n\t\t\t\tsetter.call(el, value);\n\t\t\t\tel.dispatchEvent(new Event('input', { bubbles: true }));\n\t\t\t} catch (e) {}\n\t\t}\n\t\tfunction scrollables() {\n\t\t\tvar out = [];\n\t\t\ttry {\n\t\t\t\tvar all = document.querySelectorAll('*');\n\t\t\t\tfor (var i = 0; i < all.length && out.length < 40; i++) {\n\t\t\t\t\tvar e = all[i];\n\t\t\t\t\ttry {\n\t\t\t\t\t\tvar cs = typeof getComputedStyle === 'function' ? getComputedStyle(e) : null;\n\t\t\t\t\t\tif (!cs || !/(auto|scroll|overlay)/.test(String(cs.overflowY || ''))) continue;\n\t\t\t\t\t\tif (e.scrollHeight > e.clientHeight + 20 && e.clientHeight > 50) out.push(e);\n\t\t\t\t\t} catch (e2) {}\n\t\t\t\t}\n\t\t\t} catch (e) {}\n\t\t\treturn out;\n\t\t}\n\t\tfunction mainScroller() {\n\t\t\tvar best = null, bestRange = 0;\n\t\t\tscrollables().forEach(function (e) {\n\t\t\t\tvar r = e.scrollHeight - e.clientHeight;\n\t\t\t\tif (r > bestRange) { bestRange = r; best = e; }\n\t\t\t});\n\t\t\treturn best;\n\t\t}\n\t\tfunction capture() {\n\t\t\tvar snap = { t: Date.now(), main: null, fields: [] };\n\t\t\ttry {\n\t\t\t\tvar ms = mainScroller();\n\t\t\t\tif (ms) snap.main = { y: ms.scrollTop, h: ms.scrollHeight, ch: ms.clientHeight };\n\t\t\t} catch (e) {}\n\t\t\ttry {\n\t\t\t\tvar nodes = document.querySelectorAll('textarea, input[type=text], input[type=search], [contenteditable=true]');\n\t\t\t\tfor (var i = 0; i < nodes.length && snap.fields.length < 50; i++) {\n\t\t\t\t\tvar el = nodes[i];\n\t\t\t\t\tvar v = el.isContentEditable ? el.innerText : el.value;\n\t\t\t\t\tif (typeof v === 'string' && v.length > 0 && v.length < 20000) {\n\t\t\t\t\t\tsnap.fields.push({ p: pathOf(el), v: v, ce: !!el.isContentEditable });\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t} catch (e) {}\n\t\t\treturn snap;\n\t\t}\n\t\tfunction restoreFields(snap) {\n\t\t\ttry {\n\t\t\t\t(snap.fields || []).forEach(function (f) {\n\t\t\t\t\tvar el = findByPath(f.p);\n\t\t\t\t\tif (el) setValue(el, f.v);\n\t\t\t\t});\n\t\t\t} catch (e) {}\n\t\t}\n\t\tfunction restoreScroll(snap) {\n\t\t\ttry {\n\t\t\t\tif (!snap.main) return;\n\t\t\t\tvar deadline = Date.now() + 10000;\n\t\t\t\tvar ticks = 0;\n\t\t\t\tvar tick = function () {\n\t\t\t\t\ttry {\n\t\t\t\t\t\tvar ms = mainScroller();\n\t\t\t\t\t\tif (ms) {\n\t\t\t\t\t\t\tvar range = Math.max(1, ms.scrollHeight - ms.clientHeight);\n\t\t\t\t\t\t\tvar oldRange = Math.max(1, snap.main.h - snap.main.ch);\n\t\t\t\t\t\t\tvar target = Math.round(snap.main.y * (range / oldRange));\n\t\t\t\t\t\t\tif (Math.abs(ms.scrollTop - target) > 2) ms.scrollTop = target;\n\t\t\t\t\t\t\tif (ticks === 0 || Math.abs(ms.scrollTop - target) > 2) {\n\t\t\t\t\t\t\t\tconsole.warn('[P-282-UI] scroll restore target=' + target + ' actual=' + Math.round(ms.scrollTop) + ' h=' + ms.scrollHeight);\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t} catch (e) {}\n\t\t\t\t\tticks++;\n\t\t\t\t\tif (Date.now() < deadline) setTimeout(tick, 300);\n\t\t\t\t};\n\t\t\t\ttick();\n\t\t\t} catch (e) {}\n\t\t}\n\n\t\t// ① 每 2 秒自动快照（首次记录诊断）\n\t\tvar __p282SnapLogged = false;\n\t\tsetInterval(function () {\n\t\t\ttry {\n\t\t\t\tvar __snap = capture();\n\t\t\t\tSTORE && STORE.setItem(SNAP_KEY, JSON.stringify(__snap));\n\t\t\t\tif (!__p282SnapLogged) { __p282SnapLogged = true; console.warn('[P-282-UI] snapshot first main=' + (__snap.main ? Math.round(__snap.main.y) + '/' + __snap.main.h : 'none') + ' fields=' + __snap.fields.length); }\n\t\t\t} catch (e) {}\n\t\t}, 2000);\n\n\t\t// ② 崩溃重载后：新快照 ⟹ 恢复（草稿立即恢复；滚动持续校正 10 秒）\n\t\ttry {\n\t\t\tvar raw = STORE ? STORE.getItem(SNAP_KEY) : null;\n\t\t\tif (!raw) {\n\t\t\t\tconsole.warn('[P-282-UI] restore skipped: empty');\n\t\t\t} else {\n\t\t\t\tvar snap = JSON.parse(raw);\n\t\t\t\tvar age = snap && typeof snap.t === 'number' ? Date.now() - snap.t : -1;\n\t\t\t\tif (snap && age >= 0 && age < FRESH_MS) {\n\t\t\t\t\tconsole.warn('[P-282-UI] restore begin age=' + age + 'ms main=' + (snap.main ? Math.round(snap.main.y) + '/' + snap.main.h : 'none') + ' fields=' + ((snap.fields || []).length));\n\t\t\t\t\trestoreFields(snap);\n\t\t\t\t\tsetTimeout(function () { try { restoreFields(snap); } catch (e) {} }, 1200);\n\t\t\t\t\trestoreScroll(snap);\n\t\t\t\t} else {\n\t\t\t\t\tconsole.warn('[P-282-UI] restore skipped: stale age=' + age + 'ms');\n\t\t\t\t}\n\t\t\t}\n\t\t} catch (e) {}\n\n\t\t// ③ 堆水位预警\n\t\tsetInterval(function () {\n\t\t\ttry {\n\t\t\t\tvar m = performance.memory;\n\t\t\t\tif (!m || !m.jsHeapSizeLimit) return;\n\t\t\t\tvar ratio = m.usedJSHeapSize / m.jsHeapSizeLimit;\n\t\t\t\tif (ratio > HEAP_WARN_RATIO) {\n\t\t\t\t\tconsole.warn('[P-282-MEM] ' + Math.round(ratio * 100) + '% (' + Math.round(m.usedJSHeapSize / 1048576) + 'MB / ' + Math.round(m.jsHeapSizeLimit / 1048576) + 'MB)');\n\t\t\t\t}\n\t\t\t} catch (e) {}\n\t\t}, 30000);\n\t} catch (e) {}\n})();\n"
-+    let p282LastMemoryWarningAt = 0
-+    window.webContents.on('did-finish-load', () => {
-+      void window.webContents.executeJavaScript(UI_GUARD_SCRIPT, true).catch(() => {})
-+    })
-+    window.webContents.on('console-message', (details) => {
-+      try {
-+        const message = details.message
-+        if (typeof message !== 'string') return
-+        const isUi = message.includes('[P-282-UI]')
-+        const isMem = message.includes('[P-282-MEM]')
-+        if (!isUi && !isMem) return
-+        appendFileSync(join(app.getPath('logs'), 'renderer-memory.log'), `${new Date().toISOString()} ${message}\n`)
-+        if (!isMem || !Notification.isSupported()) return
-+        const now = Date.now()
-+        if (now - p282LastMemoryWarningAt < 30 * 60_000) return
-+        p282LastMemoryWarningAt = now
-+        new Notification({ title: 'DSH renderer memory is close to its limit', body: `${message} — save your work and restart the app` }).show()
-+      } catch {
-+        // diagnostics must never affect the app
-+      }
-+    })
++    installUiGuard(window.webContents, app.getPath('logs'))
      return window
    }
    const enterWorkspace = async ({ activate = true }: { activate?: boolean } = {}): Promise<void> => {
+diff --git a/apps/desktop/src/ui-guard.ts b/apps/desktop/src/ui-guard.ts
+new file mode 100644
+index 0000000..ac263f3
+--- /dev/null
++++ b/apps/desktop/src/ui-guard.ts
+@@ -0,0 +1,209 @@
++import { appendFileSync } from 'node:fs'
++import { join } from 'node:path'
++import { Notification, type WebContents } from 'electron'
++
++/**
++ * Script injected into the main window on every load. It snapshots the scroll
++ * position and the drafts of text fields, restores them after a recovery
++ * reload (only when the snapshot is fresh), and reports when the renderer heap
++ * approaches its limit.
++ */
++export const UI_GUARD_SCRIPT = String.raw`(function () {
++	try {
++		if (window.__P282_UI_GUARD__) return;
++		window.__P282_UI_GUARD__ = true;
++		try { console.warn('[P-282-UI] guard active @ ' + String((window.location && window.location.href) || '').slice(0, 90)); } catch (e) {}
++		var SNAP_KEY = '__P282_UI_SNAPSHOT__';
++		var STORE = (function () {
++			try { var ls = window.localStorage; ls.setItem('__p282_probe__', '1'); ls.removeItem('__p282_probe__'); return ls; } catch (e) {}
++			try { return window.sessionStorage; } catch (e) {}
++			return null;
++		})();
++		var FRESH_MS = 10000;           // 仅恢复"崩溃前 10 秒内"的快照
++		var HEAP_WARN_RATIO = 0.8;      // 堆水位预警阈值
++
++		function indexOf(el) {
++			var i = 0, s = el;
++			while ((s = s.previousElementSibling)) i++;
++			return i;
++		}
++		function pathOf(el) {
++			var parts = [], n = el;
++			while (n && n.nodeType === 1 && parts.length < 8) {
++				parts.unshift(indexOf(n) + ':' + (n.tagName || '').toLowerCase());
++				n = n.parentElement;
++			}
++			return parts.join('/');
++		}
++		function findByPath(path) {
++			try {
++				var parts = String(path).split('/');
++				var n = document;
++				for (var i = 0; i < parts.length; i++) {
++					var p = parts[i].split(':');
++					var idx = parseInt(p[0], 10);
++					if (!n || !n.children || idx >= n.children.length) return null;
++					n = n.children[idx];
++				}
++				return n;
++			} catch (e) { return null; }
++		}
++		function setValue(el, value) {
++			try {
++				if (el.isContentEditable) {
++					el.innerText = value;
++					el.dispatchEvent(new Event('input', { bubbles: true }));
++					return;
++				}
++				var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
++				var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
++				setter.call(el, value);
++				el.dispatchEvent(new Event('input', { bubbles: true }));
++			} catch (e) {}
++		}
++		function scrollables() {
++			var out = [];
++			try {
++				var all = document.querySelectorAll('*');
++				for (var i = 0; i < all.length && out.length < 40; i++) {
++					var e = all[i];
++					try {
++						var cs = typeof getComputedStyle === 'function' ? getComputedStyle(e) : null;
++						if (!cs || !/(auto|scroll|overlay)/.test(String(cs.overflowY || ''))) continue;
++						if (e.scrollHeight > e.clientHeight + 20 && e.clientHeight > 50) out.push(e);
++					} catch (e2) {}
++				}
++			} catch (e) {}
++			return out;
++		}
++		function mainScroller() {
++			var best = null, bestRange = 0;
++			scrollables().forEach(function (e) {
++				var r = e.scrollHeight - e.clientHeight;
++				if (r > bestRange) { bestRange = r; best = e; }
++			});
++			return best;
++		}
++		function capture() {
++			var snap = { t: Date.now(), main: null, fields: [] };
++			try {
++				var ms = mainScroller();
++				if (ms) snap.main = { y: ms.scrollTop, h: ms.scrollHeight, ch: ms.clientHeight };
++			} catch (e) {}
++			try {
++				var nodes = document.querySelectorAll('textarea, input[type=text], input[type=search], [contenteditable=true]');
++				for (var i = 0; i < nodes.length && snap.fields.length < 50; i++) {
++					var el = nodes[i];
++					var v = el.isContentEditable ? el.innerText : el.value;
++					if (typeof v === 'string' && v.length > 0 && v.length < 20000) {
++						snap.fields.push({ p: pathOf(el), v: v, ce: !!el.isContentEditable });
++					}
++				}
++			} catch (e) {}
++			return snap;
++		}
++		function restoreFields(snap) {
++			try {
++				(snap.fields || []).forEach(function (f) {
++					var el = findByPath(f.p);
++					if (el) setValue(el, f.v);
++				});
++			} catch (e) {}
++		}
++		function restoreScroll(snap) {
++			try {
++				if (!snap.main) return;
++				var deadline = Date.now() + 10000;
++				var ticks = 0;
++				var tick = function () {
++					try {
++						var ms = mainScroller();
++						if (ms) {
++							var range = Math.max(1, ms.scrollHeight - ms.clientHeight);
++							var oldRange = Math.max(1, snap.main.h - snap.main.ch);
++							var target = Math.round(snap.main.y * (range / oldRange));
++							if (Math.abs(ms.scrollTop - target) > 2) ms.scrollTop = target;
++							if (ticks === 0 || Math.abs(ms.scrollTop - target) > 2) {
++								console.warn('[P-282-UI] scroll restore target=' + target + ' actual=' + Math.round(ms.scrollTop) + ' h=' + ms.scrollHeight);
++							}
++						}
++					} catch (e) {}
++					ticks++;
++					if (Date.now() < deadline) setTimeout(tick, 300);
++				};
++				tick();
++			} catch (e) {}
++		}
++
++		// ① 每 2 秒自动快照（首次记录诊断）
++		var __p282SnapLogged = false;
++		setInterval(function () {
++			try {
++				var __snap = capture();
++				STORE && STORE.setItem(SNAP_KEY, JSON.stringify(__snap));
++				if (!__p282SnapLogged) { __p282SnapLogged = true; console.warn('[P-282-UI] snapshot first main=' + (__snap.main ? Math.round(__snap.main.y) + '/' + __snap.main.h : 'none') + ' fields=' + __snap.fields.length); }
++			} catch (e) {}
++		}, 2000);
++
++		// ② 崩溃重载后：新快照 ⟹ 恢复（草稿立即恢复；滚动持续校正 10 秒）
++		try {
++			var raw = STORE ? STORE.getItem(SNAP_KEY) : null;
++			if (!raw) {
++				console.warn('[P-282-UI] restore skipped: empty');
++			} else {
++				var snap = JSON.parse(raw);
++				var age = snap && typeof snap.t === 'number' ? Date.now() - snap.t : -1;
++				if (snap && age >= 0 && age < FRESH_MS) {
++					console.warn('[P-282-UI] restore begin age=' + age + 'ms main=' + (snap.main ? Math.round(snap.main.y) + '/' + snap.main.h : 'none') + ' fields=' + ((snap.fields || []).length));
++					restoreFields(snap);
++					setTimeout(function () { try { restoreFields(snap); } catch (e) {} }, 1200);
++					restoreScroll(snap);
++				} else {
++					console.warn('[P-282-UI] restore skipped: stale age=' + age + 'ms');
++				}
++			}
++		} catch (e) {}
++
++		// ③ 堆水位预警
++		setInterval(function () {
++			try {
++				var m = performance.memory;
++				if (!m || !m.jsHeapSizeLimit) return;
++				var ratio = m.usedJSHeapSize / m.jsHeapSizeLimit;
++				if (ratio > HEAP_WARN_RATIO) {
++					console.warn('[P-282-MEM] ' + Math.round(ratio * 100) + '% (' + Math.round(m.usedJSHeapSize / 1048576) + 'MB / ' + Math.round(m.jsHeapSizeLimit / 1048576) + 'MB)');
++				}
++			} catch (e) {}
++		}, 30000);
++	} catch (e) {}
++})();
++`
++
++/**
++ * Install the UI guard on a window's web contents.
++ * @param webContents - the main window's web contents.
++ * @param logsDirectory - the application logs directory for audit lines.
++ */
++export function installUiGuard(webContents: WebContents, logsDirectory: string): void {
++  webContents.on('did-finish-load', () => {
++    void webContents.executeJavaScript(UI_GUARD_SCRIPT, true).catch(() => {})
++  })
++  let lastMemoryWarningAt = 0
++  webContents.on('console-message', (details) => {
++    try {
++      const message = details.message
++      if (typeof message !== 'string') return
++      const isUi = message.includes('[P-282-UI]')
++      const isMem = message.includes('[P-282-MEM]')
++      if (!isUi && !isMem) return
++      appendFileSync(join(logsDirectory, 'renderer-memory.log'), `${new Date().toISOString()} ${message}\n`)
++      if (!isMem || !Notification.isSupported()) return
++      const now = Date.now()
++      if (now - lastMemoryWarningAt < 30 * 60_000) return
++      lastMemoryWarningAt = now
++      new Notification({ title: 'DSH renderer memory is close to its limit', body: `${message} — save your work and restart the app` }).show()
++    } catch {
++      // diagnostics must never affect the app
++    }
++  })
++}
