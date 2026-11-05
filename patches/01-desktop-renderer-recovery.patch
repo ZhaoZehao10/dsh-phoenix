@@ -1,16 +1,16 @@
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index 4770fe8..39ddee7 100644
+index dd31412..3e50e30 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -3,6 +3,7 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
- /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
- 
+@@ -8,6 +8,7 @@ import { isDesktopUpdateChannel } from './settings-file.ts'
+ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
  import { access, readFile, writeFile } from 'node:fs/promises'
 +import { appendFileSync } from 'node:fs'
  import { join } from 'node:path'
  import { fileURLToPath } from 'node:url'
  import {
-@@ -67,6 +68,35 @@ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
+@@ -72,6 +73,35 @@ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
  import { DesktopTray } from './tray.ts'
  import { DesktopBackgroundNotice } from './background-notice.ts'
  
@@ -46,7 +46,7 @@ index 4770fe8..39ddee7 100644
  let focusPrimaryWindow = (): void => {}
  let stopForRecovery = async (): Promise<void> => { await stopOperationReports() }
  let shuttingDown = false
-@@ -1205,9 +1235,27 @@ async function main(): Promise<void> {
+@@ -1334,9 +1364,27 @@ async function main(): Promise<void> {
      })
      window.webContents.on('render-process-gone', (_event, details) => {
        navigation = undefined

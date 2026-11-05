@@ -1,4 +1,4 @@
-# DSH Renderer OOM Crash — Fix, Toolchain, and Test Suite
+﻿# DSH Renderer OOM Crash — Fix, Toolchain, and Test Suite
 
 **English** | [中文版](README.zh-CN.md)
 
