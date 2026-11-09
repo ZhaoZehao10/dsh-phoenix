@@ -17,13 +17,9 @@
 #   · 更新后若官方仍未修，重跑 patch-asar.mjs + 本脚本即可
 
 $ErrorActionPreference = 'Stop'
-# 路径全部可移植：默认按当前用户/脚本位置推导，可用环境变量覆盖
-$BundleRoot = Split-Path $PSScriptRoot -Parent
-$Install = if ($env:DSH_INSTALL_DIR) { $env:DSH_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\DeepSeek Harness" }
-$WorkDir = if ($env:DSH_WORK_DIR) { $env:DSH_WORK_DIR } else { Join-Path $BundleRoot "work" }
-if (-not (Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+$Install = if ($env:DSH_INSTALL_DIR) { $env:DSH_INSTALL_DIR } else { "C:\Users\zhao-\AppData\Local\Programs\DeepSeek Harness" }
 $Target  = Join-Path $Install "resources\app.asar"
-$Patched = if ($env:DSH_PATCHED_ASAR) { $env:DSH_PATCHED_ASAR } else { Join-Path $WorkDir "app.asar.patched" }
+$Patched = if ($env:DSH_PATCHED_ASAR) { $env:DSH_PATCHED_ASAR } else { "D:\DSH_Workspace\app.asar.patched" }
 
 Write-Host ''
 Write-Host '  =============================================================='
@@ -65,7 +61,7 @@ Write-Host '  ✅ DSH 未占用本目录 asar（锁探测通过）'
 $ver = (Get-Item (Join-Path $Install "DeepSeek Harness.exe")).VersionInfo.FileVersion
 # 允许列表：补丁锚点已对以下编译产物逐一验证（patch-asar.mjs 的锚点校验是第二道闸）
 # 新版本适配流程：跑 tooling/patch-asar.mjs + campaign 全套，绿了就把版本加进来（或设 DSH_ALLOWED_VERSIONS）
-$allowed = if ($env:DSH_ALLOWED_VERSIONS) { $env:DSH_ALLOWED_VERSIONS -split ',' } else { @('0.2.1-rc.3', '0.2.1-rc.5') }
+$allowed = if ($env:DSH_ALLOWED_VERSIONS) { $env:DSH_ALLOWED_VERSIONS -split ',' } else { @('0.2.1-rc.3', '0.2.1-rc.5', '0.2.2-rc.1') }
 if ($allowed -notcontains $ver) {
     Write-Host "  ❌ 安装版本是 $ver，未在已验证列表（$($allowed -join ', ')）中。" -ForegroundColor Red
     Write-Host '     ⟹ 先重跑 patch-asar.mjs + campaign 全套测试；全绿后再把该版本加入允许列表'
@@ -80,11 +76,11 @@ if (-not (Test-Path $Patched)) {
     exit 1
 }
 $node = Join-Path $Install "resources\runtime\primary-runtime\dependencies\node\bin\node.exe"
-$checkJs = Join-Path $BundleRoot "scripts\lib\check-asar.cjs"
-# asar 检查逻辑在 scripts/lib/check-asar.cjs（不用 node -e：PS5.1 剥双引号，实测踩过）
-& $node $checkJs extract $Patched "$WorkDir\_install_check.mjs" | ForEach-Object { "  $_" }
+$checkJs = Join-Path $PSScriptRoot "check-asar.cjs"
+# asar 检查逻辑在 check-asar.cjs（不用 node -e：PS5.1 会剥掉 -e 参数里的双引号，实测踩过）
+& $node $checkJs extract $Patched "D:\DSH_Workspace\_install_check.mjs" | ForEach-Object { "  $_" }
 if ($LASTEXITCODE -ne 0) { Write-Host '  ❌ 补丁文件自检失败' -ForegroundColor Red; exit 1 }
-& $node --check "$WorkDir\_install_check.mjs"
+& $node --check "D:\DSH_Workspace\_install_check.mjs"
 if ($LASTEXITCODE -ne 0) { Write-Host '  ❌ 补丁文件语法无效' -ForegroundColor Red; exit 1 }
 Write-Host '  ✅ 补丁文件自检通过（marker + 语法）'
 
@@ -101,9 +97,9 @@ if ($currentVer -ne 'none') {
 $backup = Get-ChildItem (Join-Path $Install "resources") -Filter "app.asar.bak-*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $backup) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $bakPath = Join-Path $Install "resources\app.asar.bak-rc3-$stamp"
+    $bakPath = Join-Path $Install "resources\app.asar.bak-$ver-$stamp"
     Copy-Item $Target $bakPath
-    Write-Host "  ✅ 已备份原版 → app.asar.bak-rc3-$stamp"
+    Write-Host "  ✅ 已备份原版 → app.asar.bak-$ver-$stamp"
 } else {
     Write-Host "  ℹ️ 已存在备份 $($backup.Name)（不重复备份，避免备份到补丁版）"
     $bakPath = $backup.FullName
@@ -112,13 +108,13 @@ if (-not $backup) {
 # ---- ⑤ 替换 + 结构自检 ----
 Copy-Item $Patched $Target -Force
 Write-Host '  ✅ 已替换 app.asar'
-& $node $checkJs extract $Target "$WorkDir\_installed_main.mjs" | Out-Null
+& $node $checkJs extract $Target "D:\DSH_Workspace\_installed_main.mjs" | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host '  ❌ 安装后自检失败：marker 缺失！正在回滚…' -ForegroundColor Red
     Copy-Item $bakPath $Target -Force
     exit 1
 }
-& $node --check "$WorkDir\_installed_main.mjs"
+& $node --check "D:\DSH_Workspace\_installed_main.mjs"
 if ($LASTEXITCODE -ne 0) {
     Write-Host '  ❌ 安装后自检失败：语法无效！正在回滚…' -ForegroundColor Red
     Copy-Item $bakPath $Target -Force
@@ -126,7 +122,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host '  ✅ 安装后结构自检通过'
 
-$hasBootcheck = Select-String -Path "$WorkDir\_install_check.mjs" -Pattern 'DSH_PATCH_BOOTCHECK' -Quiet
+$hasBootcheck = Select-String -Path "D:\DSH_Workspace\_install_check.mjs" -Pattern 'DSH_PATCH_BOOTCHECK' -Quiet
 if (-not $hasBootcheck) {
     Write-Host ''
     Write-Host '  ⚠️ 补丁未包含 BOOTCHECK（构建时 DSH_NO_BOOTCHECK=1 禁用）—— 跳过启动自检。' -ForegroundColor Yellow
@@ -135,7 +131,7 @@ if (-not $hasBootcheck) {
 # ---- ⑥ BOOTCHECK：真启动一次，验证 Electron 能加载补丁 asar ----
 Write-Host ''
 Write-Host '  BOOTCHECK：短暂启动一次应用自检（会闪一个窗口，属正常）…'
-$bootFlag = Join-Path $WorkDir "_patch_boot_ok.flag"
+$bootFlag = "D:\DSH_Workspace\_patch_boot_ok.flag"
 Remove-Item $bootFlag -Force -ErrorAction SilentlyContinue
 # ★ 清掉 ELECTRON_RUN_AS_NODE：若本脚本从 DSH 工具进程里跑会带着它，
 #   Electron 会退化成纯 Node 模式永远起不来（P-282 排障实测的坑）
@@ -168,7 +164,7 @@ if ($bootLine -match 'boot-ok') {
     exit 1
 }
 }
-Remove-Item "$WorkDir\_installed_main.mjs","$WorkDir\_install_check.mjs" -Force -ErrorAction SilentlyContinue
+Remove-Item "D:\DSH_Workspace\_installed_main.mjs","D:\DSH_Workspace\_install_check.mjs" -Force -ErrorAction SilentlyContinue
 
 Write-Host ''
 Write-Host '  =============================================================='

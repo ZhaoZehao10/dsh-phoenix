@@ -2,7 +2,7 @@
 
 The patch version matches the marker inside the built `main.js` (`/* P-282 renderer-recovery vN */`), so the installed artifact can be identified directly.
 
-## v10 — 2026-11-05
+## v10 (0.2.2-rc.1 build) — 2026-11-09`n- **适配新版 0.2.2-rc.1**：asar/main.js 大重构（838 KB），`renderCrashReport` 新增 auxiliary diagnostics 段 ⟹ 更新崩溃报告锚点片段；锚点唯一命中，处理器代码未变。`n- 安装脚本版本白名单加入 `0.2.2-rc.1`；备份命名改为版本中性（`app.asar.bak-<ver>-<stamp>`）。`n- 0.2.2-rc.1 上静态全套通过：结构 12 / 参照 11 / 语义 21 / 崩溃报告 5 / UI 守护 12 / 模糊 100 / 基准。`n- **上游未修复**：主窗口仍为 reportFatal（无恢复逻辑）；事件窗口 prepend 仍为无界 concat。`n`n## v10 — 2026-11-05
 - **关键修复**：Electron 的 `performance.memory.usedJSHeapSize` 在未启用 `--enable-precise-memory-info` 时**恒为 10 MB**（实测）⟹ 堆水位预警永远不会触发。已在主进程模块初始化时添加该开关（本地 asar 补丁与上游补丁 03 同步）。
 - **真实 80% 堆触发 E2E 通过**：独立 Electron（`--max-old-space-size=512` + `--enable-precise-memory-info`）将渲染器堆分配至 **80.52%（513 MB / 637 MB）**，guard 输出 `[P-282-MEM] 81% (490MB / 608MB)`。
 - UI 快照日志增加 `heap=<used>/<limit>` 诊断；新增 `patches/README.md`（补丁依赖与最小验证命令）。
